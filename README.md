@@ -6,7 +6,7 @@ A declarative CLI deployment tool that manages your entire container stack from 
 
 ## The Idea
 
-Most deployment setups require you to manually write Nginx configs, Docker Compose files, and manage containers by hand. SwiftDeploy flips that — you describe your deployment once in `manifest.yaml`, and the tool generates everything else and manages the full lifecycle.
+Most deployment setups require you to manually write Nginx configs, Docker Compose files, and manage containers by hand. SwiftDeploy flips that  you describe your deployment once in `manifest.yaml`, and the tool generates everything else and manages the full lifecycle.
 
 ```
 manifest.yaml  →  swiftdeploy init  →  nginx.conf + docker-compose.yml
@@ -65,11 +65,11 @@ docker build -t lucky059-swiftdeploy:latest .
 ./swiftdeploy deploy
 ```
 
-App is now live at **http://localhost:9090**
+App is now live at http://localhost:8080
 
 ---
 
-## manifest.yaml
+manifest.yaml
 
 The single source of truth. Every generated file derives from this.
 
@@ -97,9 +97,9 @@ volumes:
 
 ---
 
-## CLI Subcommands
+CLI Subcommands
 
-### `init`
+`init`
 Reads `manifest.yaml` and generates `nginx.conf` and `docker-compose.yml` from templates.
 
 ```bash
@@ -114,7 +114,7 @@ Reads `manifest.yaml` and generates `nginx.conf` and `docker-compose.yml` from t
 
 ---
 
-### `validate`
+`validate`
 Runs 5 pre-flight checks and exits non-zero on any failure.
 
 ```bash
@@ -142,14 +142,14 @@ Runs 5 pre-flight checks and exits non-zero on any failure.
 
 ---
 
-### `deploy`
+`deploy`
 Runs `init`, starts the full stack, and blocks until health checks pass or 60s timeout.
 
 ```bash
 ./swiftdeploy deploy
 ```
 ```
-🚀 [deploy] Starting stack...
+[deploy] Starting stack...
 
 ✔ Container swiftdeploy-app    Healthy
 ✔ Container swiftdeploy-nginx  Started
