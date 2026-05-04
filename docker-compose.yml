@@ -1,0 +1,49 @@
+services:
+  api:
+    image: swift-deploy-1-node:latest
+    container_name: swiftdeploy-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - MODE=canary
+      - APP_VERSION=1.0.0
+      - APP_PORT=3000
+    networks:
+      - swiftdeploy-net
+    volumes:
+      - app-logs:/app/logs
+    restart: always
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  nginx:
+    image: nginx:latest
+    container_name: swiftdeploy-nginx
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - swiftdeploy-net
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: always
+
+networks:
+  swiftdeploy-net:
+    driver: bridge
+
+volumes:
+  app-logs:

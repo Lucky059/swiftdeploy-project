@@ -1,0 +1,49 @@
+services:
+  {{ services.name }}:
+    image: {{ services.image }}
+    container_name: swiftdeploy-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - MODE={{ services.mode }}
+      - APP_VERSION={{ services.version }}
+      - APP_PORT={{ services.port }}
+    networks:
+      - {{ network.name }}
+    volumes:
+      - {{ volumes.logs }}:/app/logs
+    restart: {{ services.restart_policy }}
+    expose:
+      - "{{ services.port }}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:{{ services.port }}/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  nginx:
+    image: {{ nginx.image }}
+    container_name: swiftdeploy-nginx
+    ports:
+      - "{{ nginx.port }}:{{ nginx.port }}"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - {{ network.name }}
+    depends_on:
+      {{ services.name }}:
+        condition: service_healthy
+    restart: {{ services.restart_policy }}
+
+networks:
+  {{ network.name }}:
+    driver: {{ network.driver_type }}
+
+volumes:
+  {{ volumes.logs }}:
