@@ -1,6 +1,6 @@
 services:
   name: api
-  image: swift-deploy-1-node:latest
+  image: lucky-swiftdeploy-stage4b:latest
   port: 3000
   mode: canary
   version: 1.0.0

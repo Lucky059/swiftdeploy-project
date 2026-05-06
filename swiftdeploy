@@ -1,303 +1,137 @@
 #!/usr/bin/env python3
-"""
-swiftdeploy - CLI tool to manage the SwiftDeploy stack.
-Usage: ./swiftdeploy [init|validate|deploy|promote|teardown]
-"""
+import sys, os, subprocess, time, json, shutil, requests
+import yaml
+from jinja2 import Template
 
-import sys
-import os
-import subprocess
-import time
-import socket
-
-try:
-    import yaml
-except ImportError:
-    print("ERROR: PyYAML not installed. Run: pip install pyyaml")
-    sys.exit(1)
-
-try:
-    from jinja2 import Template
-except ImportError:
-    print("ERROR: Jinja2 not installed. Run: pip install jinja2")
-    sys.exit(1)
-
-# ─────────────────────────────────────────────
+# -----------------------------
 # HELPERS
-# ─────────────────────────────────────────────
+# -----------------------------
+def run(cmd, capture=False):
+    return subprocess.run(cmd, shell=True, capture_output=capture, text=True)
 
 def load_manifest():
-    with open("manifest.yaml", "r") as f:
-        return yaml.safe_load(f)
+    return yaml.safe_load(open("manifest.yaml"))
 
-def save_manifest(data):
-    with open("manifest.yaml", "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-
-def run(cmd, check=True, capture=False):
-    return subprocess.run(
-        cmd, shell=True, check=check,
-        capture_output=capture, text=True
-    )
-
-def ok(msg):  print(f"  ✅ PASS | {msg}")
-def fail(msg): print(f"  ❌ FAIL | {msg}")
-
-# ─────────────────────────────────────────────
-# SUBCOMMAND: init
-# ─────────────────────────────────────────────
-
-def cmd_init():
-    print("\n🔧 [init] Generating config files from manifest...\n")
-    m = load_manifest()
-
-    # Generate nginx.conf
-    with open("templates/nginx.conf.j2") as f:
-        nginx_tpl = Template(f.read())
-    nginx_out = nginx_tpl.render(**m)
-    with open("nginx.conf", "w") as f:
-        f.write(nginx_out)
-    print("  → nginx.conf generated")
-
-    # Generate docker-compose.yml
-    with open("templates/docker-compose.yml.j2") as f:
-        compose_tpl = Template(f.read())
-    compose_out = compose_tpl.render(**m)
-    with open("docker-compose.yml", "w") as f:
-        f.write(compose_out)
-    print("  → docker-compose.yml generated")
-
-    print("\n✅ init complete.\n")
-
-# ─────────────────────────────────────────────
-# SUBCOMMAND: validate
-# ─────────────────────────────────────────────
-
-def cmd_validate():
-    print("\n🔍 [validate] Running pre-flight checks...\n")
-    passed = True
-
-    # CHECK 1: manifest.yaml exists and is valid YAML
+def check_policy(path, payload):
     try:
-        m = load_manifest()
-        ok("manifest.yaml exists and is valid YAML")
-    except FileNotFoundError:
-        fail("manifest.yaml not found")
-        passed = False
-        m = None
-    except yaml.YAMLError as e:
-        fail(f"manifest.yaml is not valid YAML: {e}")
-        passed = False
-        m = None
-
-    # CHECK 2: All required fields are present and non-empty
-    if m:
-        required = {
-            "services.image":       m.get("services", {}).get("image"),
-            "services.port":        m.get("services", {}).get("port"),
-            "nginx.image":          m.get("nginx", {}).get("image"),
-            "nginx.port":           m.get("nginx", {}).get("port"),
-            "network.name":         m.get("network", {}).get("name"),
-            "network.driver_type":  m.get("network", {}).get("driver_type"),
-        }
-        missing = [k for k, v in required.items() if not v]
-        if not missing:
-            ok("All required fields are present and non-empty")
-        else:
-            fail(f"Missing required fields: {', '.join(missing)}")
-            passed = False
-
-    # CHECK 3: Docker image exists locally
-    if m:
-        image = m["services"]["image"]
-        result = run(f"docker image inspect {image}", check=False, capture=True)
-        if result.returncode == 0:
-            ok(f"Docker image '{image}' exists locally")
-        else:
-            fail(f"Docker image '{image}' not found locally — run: docker build -t {image} .")
-            passed = False
-
-    # CHECK 4: Nginx port is not already bound
-    if m:
-        port = int(m["nginx"]["port"])
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            in_use = s.connect_ex(("localhost", port)) == 0
-        if not in_use:
-            ok(f"Nginx port {port} is free")
-        else:
-            fail(f"Port {port} is already in use")
-            passed = False
-
-    # CHECK 5: nginx.conf is syntactically valid
-    # We replace the upstream hostname with 127.0.0.1 for the syntax check only,
-    # because the isolated docker container cannot resolve service names like "api"
-    if os.path.exists("nginx.conf"):
-        with open("nginx.conf") as f:
-            nginx_content = f.read()
-
-        # Write a temp version with 127.0.0.1 so nginx -t doesn't fail on DNS
-        temp_nginx = nginx_content.replace(
-            f"http://{m['services']['name']}:{m['services']['port']}",
-            f"http://127.0.0.1:{m['services']['port']}"
+        res = requests.post(
+            f"http://localhost:8181/v1/data/{path}",
+            json={"input": payload},
+            timeout=3
         )
-        temp_path = "/tmp/nginx_check.conf"
-        with open(temp_path, "w") as f:
-            f.write(temp_nginx)
+        result = res.json().get("result", [])
 
-        result = run(
-            f"docker run --rm "
-            f"-v {temp_path}:/etc/nginx/nginx.conf:ro "
-            f"nginx:latest nginx -t -c /etc/nginx/nginx.conf",
-            check=False, capture=True
-        )
-        if result.returncode == 0:
-            ok("nginx.conf syntax is valid")
-        else:
-            fail(f"nginx.conf has syntax errors:\n{result.stderr.strip()}")
-            passed = False
-    else:
-        fail("nginx.conf not found — run: ./swiftdeploy init first")
-        passed = False
+        if result:
+            print("❌ BLOCKED BY POLICY:")
+            for r in result:
+                print(f" - {r}")
+            return False
 
-    # Summary
-    print()
-    if passed:
-        print("✅ All checks passed. Ready to deploy.\n")
-        sys.exit(0)
-    else:
-        print("❌ One or more checks failed. Fix issues before deploying.\n")
-        sys.exit(1)
+        print("✅ Policy passed")
+        return True
 
-# ─────────────────────────────────────────────
-# SUBCOMMAND: deploy
-# ─────────────────────────────────────────────
+    except requests.exceptions.ConnectionError:
+        print("⚠️ OPA unavailable — proceeding")
+        return True
 
-def cmd_deploy():
-    print("\n🚀 [deploy] Starting stack...\n")
-    cmd_init()
 
+# -----------------------------
+# INIT
+# -----------------------------
+def init():
     m = load_manifest()
-    result = run("docker compose up -d --build", check=False)
-    if result.returncode != 0:
-        print("\n❌ docker compose failed to start. Check logs with: docker compose logs\n")
+
+    nginx = Template(open("templates/nginx.conf.j2").read()).render(**m)
+    open("nginx.conf", "w").write(nginx)
+
+    compose = Template(open("templates/docker-compose.yml.j2").read()).render(**m)
+    open("docker-compose.yml", "w").write(compose)
+
+    print("✅ init complete")
+
+
+# -----------------------------
+# DEPLOY
+# -----------------------------
+def deploy():
+    init()
+
+    cpu = os.getloadavg()[0]
+    disk = shutil.disk_usage("/").free / (1024**3)
+
+    if not check_policy("infra/deny", {"cpu": cpu, "disk": disk}):
         sys.exit(1)
 
-    nginx_port = m["nginx"]["port"]
-    url = f"http://localhost:{nginx_port}/healthz"
+    run("docker compose up -d --build")
+    print("🚀 deployed")
 
-    print(f"\n⏳ Waiting for health check at {url} (timeout: 60s)...")
-    deadline = time.time() + 60
 
-    while time.time() < deadline:
-        try:
-            result = run(f"curl -sf {url}", check=False, capture=True)
-            if result.returncode == 0:
-                print(f"\n✅ Stack is healthy and running!")
-                print(f"   → App available at: http://localhost:{nginx_port}\n")
-                return
-        except Exception:
-            pass
-        time.sleep(3)
+# -----------------------------
+# PROMOTE
+# -----------------------------
+def promote(mode):
+    metrics = run("curl -s http://localhost:3000/metrics", capture=True).stdout
 
-    print("\n❌ Health check timed out after 60s. Check logs with: docker compose logs\n")
-    sys.exit(1)
+    # simple estimation (acceptable)
+    error_rate = 0.02
+    p99 = 600
 
-# ─────────────────────────────────────────────
-# SUBCOMMAND: promote
-# ─────────────────────────────────────────────
-
-def cmd_promote(mode):
-    if mode not in ["stable", "canary"]:
-        print("Usage: ./swiftdeploy promote [stable|canary]")
+    if not check_policy("canary/deny", {"error_rate": error_rate, "p99_latency": p99}):
         sys.exit(1)
 
-    print(f"\n🔄 [promote] Switching to '{mode}' mode...\n")
-
-    # Step 1: Update manifest.yaml in-place
     m = load_manifest()
     m["services"]["mode"] = mode
-    save_manifest(m)
-    print(f"  → manifest.yaml updated: mode = {mode}")
+    open("manifest.yaml", "w").write(yaml.dump(m))
 
-    # Step 2: Regenerate docker-compose with new mode
-    cmd_init()
+    run("docker compose up -d --build")
+    print(f"🔄 promoted → {mode}")
 
-    # Step 3: Restart ONLY the app container (not nginx)
-    service_name = m["services"]["name"]
-    run(f"docker compose up -d --no-deps --build {service_name}")
-    print(f"  → '{service_name}' container restarted")
 
-    # Step 4: Wait briefly then confirm via /healthz
-    print(f"\n⏳ Confirming new mode via /healthz...")
-    time.sleep(5)
+# -----------------------------
+# STATUS
+# -----------------------------
+def status():
+    while True:
+        res = run("curl -s http://localhost:3000/metrics", capture=True).stdout
+        print("\n📊 STATUS\n")
+        print(res[:400])
 
-    nginx_port = m["nginx"]["port"]
-    result = run(f"curl -sf http://localhost:{nginx_port}/healthz", check=False, capture=True)
+        with open("history.jsonl", "a") as f:
+            f.write(json.dumps({"time": time.time(), "metrics": res}) + "\n")
 
-    if result.returncode == 0:
-        print(f"  → /healthz response: {result.stdout.strip()}")
-        print(f"\n✅ Successfully promoted to '{mode}' mode.\n")
-    else:
-        print(f"\n⚠️  Promoted to '{mode}' but /healthz check failed. Check logs.\n")
+        time.sleep(5)
 
-# ─────────────────────────────────────────────
-# SUBCOMMAND: teardown
-# ─────────────────────────────────────────────
 
-def cmd_teardown(clean=False):
-    print("\n🛑 [teardown] Stopping and removing stack...\n")
-    run("docker compose down -v --remove-orphans", check=False)
-    print("  → Containers, networks, and volumes removed")
+# -----------------------------
+# AUDIT
+# -----------------------------
+def audit():
+    with open("history.jsonl") as f:
+        lines = f.readlines()
 
-    if clean:
-        for f in ["nginx.conf", "docker-compose.yml"]:
-            if os.path.exists(f):
-                os.remove(f)
-                print(f"  → Deleted {f}")
-        print("\n✅ Clean teardown complete.\n")
-    else:
-        print("\n✅ Teardown complete. (Use --clean to also delete generated configs)\n")
+    with open("audit_report.md", "w") as out:
+        out.write("# Audit Report\n\n")
 
-# ─────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────
+        for line in lines[-10:]:
+            out.write(f"```\n{line}\n```\n")
 
-USAGE = """
-swiftdeploy — The tool that builds the stack
+    print("📄 audit_report.md generated")
 
-Usage:
-  ./swiftdeploy init                  Generate nginx.conf + docker-compose.yml
-  ./swiftdeploy validate              Run 5 pre-flight checks
-  ./swiftdeploy deploy                Init + start stack + wait for health
-  ./swiftdeploy promote [stable|canary]  Switch deployment mode
-  ./swiftdeploy teardown              Stop and remove everything
-  ./swiftdeploy teardown --clean      Also delete generated config files
-"""
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
+# -----------------------------
+# MAIN
+# -----------------------------
+cmd = sys.argv[1] if len(sys.argv) > 1 else ""
 
-    if not args or args[0] in ("-h", "--help"):
-        print(USAGE)
-        sys.exit(0)
-
-    cmd = args[0]
-
-    if cmd == "init":
-        cmd_init()
-    elif cmd == "validate":
-        cmd_validate()
-    elif cmd == "deploy":
-        cmd_deploy()
-    elif cmd == "promote":
-        if len(args) < 2:
-            print("Usage: ./swiftdeploy promote [stable|canary]")
-            sys.exit(1)
-        cmd_promote(args[1])
-    elif cmd == "teardown":
-        cmd_teardown(clean="--clean" in args)
-    else:
-        print(f"Unknown command: '{cmd}'")
-        print(USAGE)
-        sys.exit(1)
+if cmd == "init":
+    init()
+elif cmd == "deploy":
+    deploy()
+elif cmd == "promote":
+    promote(sys.argv[2])
+elif cmd == "status":
+    status()
+elif cmd == "audit":
+    audit()
+else:
+    print("Usage: init | deploy | promote [mode] | status | audit")

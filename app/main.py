@@ -1,5 +1,9 @@
-from flask import Flask, request, jsonify, g
-import os, time, random, threading
+from flask import Flask, request, jsonify, Response, g
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+import time
+import os
+import random
+import threading
 
 app = Flask(__name__)
 
@@ -7,110 +11,91 @@ MODE = os.getenv("MODE", "stable")
 VERSION = os.getenv("APP_VERSION", "1.0.0")
 START_TIME = time.time()
 
-# Thread-safe chaos state
+# ---------------- METRICS ----------------
+
+REQUESTS = Counter("http_requests_total", "HTTP requests", ["method", "path", "status_code"])
+LATENCY = Histogram("http_request_duration_seconds", "Request latency")
+
+UPTIME = Gauge("app_uptime_seconds", "App uptime")
+MODE_G = Gauge("app_mode", "0=stable,1=canary")
+CHAOS_G = Gauge("chaos_active", "0=none,1=slow,2=error")
+
+# ---------------- CHAOS ----------------
+
 chaos_lock = threading.Lock()
-chaos = {
-    "mode": None,
-    "duration": 0,
-    "rate": 0.0
-}
+chaos = {"mode": None, "duration": 0, "rate": 0.0}
 
-
-def add_mode_header(response):
-    """Add X-Mode header if running in canary mode."""
-    if MODE == "canary":
-        response.headers["X-Mode"] = "canary"
-    return response
-
+# ---------------- MIDDLEWARE ----------------
 
 @app.before_request
-def chaos_injection():
-    """Inject chaos behaviour before handling request (canary only)."""
-    if MODE != "canary":
-        return
-
-    with chaos_lock:
-        current_mode = chaos["mode"]
-        duration = chaos["duration"]
-        rate = chaos["rate"]
-
-    if current_mode == "slow":
-        time.sleep(duration)
-
-    elif current_mode == "error":
-        if random.random() < rate:
-            res = jsonify({"error": "simulated failure", "mode": "chaos-error"})
-            res.status_code = 500
-            return add_mode_header(res)
-
-    elif current_mode == "recover":
-        with chaos_lock:
-            chaos["mode"] = None
-
+def start_timer():
+    g.start = time.time()
 
 @app.after_request
-def after_request(response):
-    """Add X-Mode header to every response in canary mode."""
-    return add_mode_header(response)
+def metrics(response):
+    duration = time.time() - g.start
 
+    LATENCY.observe(duration)
+    REQUESTS.labels(request.method, request.path, response.status_code).inc()
+
+    UPTIME.set(time.time() - START_TIME)
+    MODE_G.set(1 if MODE == "canary" else 0)
+
+    with chaos_lock:
+        c = chaos["mode"]
+
+    CHAOS_G.set(1 if c == "slow" else 2 if c == "error" else 0)
+
+    return response
+
+# ---------------- ROUTES ----------------
 
 @app.route("/")
 def home():
     return jsonify({
-        "message": f"Welcome! Running in {MODE} mode",
+        "message": "SwiftDeploy running",
         "mode": MODE,
-        "version": VERSION,
-        "timestamp": time.time()
+        "version": VERSION
     })
-
 
 @app.route("/healthz")
 def health():
-    uptime = int(time.time() - START_TIME)
-    return jsonify({
-        "status": "ok",
-        "uptime_seconds": uptime
-    })
+    return jsonify({"status": "ok"})
 
+@app.route("/metrics")
+def metrics():
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+# ---------------- CHAOS CONTROL ----------------
 
 @app.route("/chaos", methods=["POST"])
 def chaos_control():
+    data = request.get_json()
+
     if MODE != "canary":
-        return jsonify({"error": "chaos endpoint only available in canary mode"}), 403
+        return jsonify({"error": "not in canary mode"}), 403
 
-    data = request.get_json(silent=True)
-    if not data or "mode" not in data:
-        return jsonify({"error": "invalid request body, 'mode' is required"}), 400
-
-    mode = data["mode"]
+    mode = data.get("mode")
 
     if mode == "slow":
-        if "duration" not in data:
-            return jsonify({"error": "'duration' required for slow mode"}), 400
         with chaos_lock:
             chaos["mode"] = "slow"
             chaos["duration"] = float(data["duration"])
-        return jsonify({"status": "updated", "chaos": "slow", "duration": data["duration"]})
+        return jsonify({"status": "slow activated"})
 
-    elif mode == "error":
-        if "rate" not in data:
-            return jsonify({"error": "'rate' required for error mode"}), 400
+    if mode == "error":
         with chaos_lock:
             chaos["mode"] = "error"
             chaos["rate"] = float(data["rate"])
-        return jsonify({"status": "updated", "chaos": "error", "rate": data["rate"]})
+        return jsonify({"status": "error injection active"})
 
-    elif mode == "recover":
+    if mode == "recover":
         with chaos_lock:
             chaos["mode"] = None
-            chaos["duration"] = 0
-            chaos["rate"] = 0.0
-        return jsonify({"status": "updated", "chaos": "recovered"})
+        return jsonify({"status": "recovered"})
 
-    else:
-        return jsonify({"error": f"unknown chaos mode: {mode}"}), 400
+    return jsonify({"error": "invalid mode"}), 400
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("APP_PORT", 3000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.getenv("APP_PORT", 3000)))
