@@ -1,16 +1,19 @@
 services:
   name: api
-  image: lucky-swiftdeploy-stage4b:latest
-  port: 3000
-  mode: canary
-  version: 1.0.0
+  image: lucky059-swiftdeploy:latest
+  port: 4000
+  mode: stable
+  version: "1.0.0"
   restart_policy: always
+
 nginx:
   image: nginx:latest
-  port: 8080
+  port: 9090
   proxy_timeout: 30
+
 network:
   name: swiftdeploy-net
   driver_type: bridge
+
 volumes:
   logs: app-logs

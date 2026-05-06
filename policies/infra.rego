@@ -1,32 +1,53 @@
 package infra
 
+import rego.v1
+
+# Thresholds come from data.json — never hardcoded here
+
 default allow := {
-  "allow": false,
-  "reason": "blocked by default",
-  "violations": []
+    "allow": false,
+    "reason": "blocked by default",
+    "violations": []
 }
 
-allow := {
-  "allow": true,
-  "reason": "infra ok",
-  "violations": []
-} if {
-  input.disk_free >= input.thresholds.min_disk
-  input.cpu_load <= input.thresholds.max_cpu
+# ALLOW: all checks pass
+allow := result if {
+    input.disk_free_gb >= data.min_disk_gb
+    input.cpu_load     <= data.max_cpu_load
+    input.mem_free_gb  >= data.min_mem_gb
+    result := {
+        "allow":      true,
+        "reason":     "infrastructure checks passed",
+        "violations": []
+    }
 }
 
-allow := {
-  "allow": false,
-  "reason": "disk too low",
-  "violations": ["disk_free < min_disk"]
-} if {
-  input.disk_free < input.thresholds.min_disk
+# DENY: disk too low
+allow := result if {
+    input.disk_free_gb < data.min_disk_gb
+    result := {
+        "allow":      false,
+        "reason":     sprintf("disk free %.1fGB is below minimum %.1fGB", [input.disk_free_gb, data.min_disk_gb]),
+        "violations": ["disk_free < min_disk_gb"]
+    }
 }
 
-allow := {
-  "allow": false,
-  "reason": "cpu too high",
-  "violations": ["cpu_load > max_cpu"]
-} if {
-  input.cpu_load > input.thresholds.max_cpu
+# DENY: cpu too high
+allow := result if {
+    input.cpu_load > data.max_cpu_load
+    result := {
+        "allow":      false,
+        "reason":     sprintf("cpu load %.2f exceeds maximum %.2f", [input.cpu_load, data.max_cpu_load]),
+        "violations": ["cpu_load > max_cpu_load"]
+    }
+}
+
+# DENY: memory too low
+allow := result if {
+    input.mem_free_gb < data.min_mem_gb
+    result := {
+        "allow":      false,
+        "reason":     sprintf("memory free %.1fGB is below minimum %.1fGB", [input.mem_free_gb, data.min_mem_gb]),
+        "violations": ["mem_free < min_mem_gb"]
+    }
 }

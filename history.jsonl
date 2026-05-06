@@ -1,0 +1,13 @@
+{"event": "deploy_success", "mode": "stable", "timestamp": "2026-05-06T22:26:55.089488Z"}
+{"event": "status_scrape", "rps": 291.382, "total_requests": 2, "error_rate": 0.0, "p99_latency_ms": 5.0, "mode": "stable", "chaos_active": 0, "infra_allow": null, "canary_allow": null, "timestamp": "2026-05-06T22:26:55.386963Z"}
+{"event": "status_scrape", "rps": 0.0, "total_requests": 2, "error_rate": 0.0, "p99_latency_ms": 5.0, "mode": "stable", "chaos_active": 0, "infra_allow": null, "canary_allow": null, "timestamp": "2026-05-06T22:27:00.418216Z"}
+{"event": "status_scrape", "rps": 0.199, "total_requests": 3, "error_rate": 0.0, "p99_latency_ms": 5.0, "mode": "stable", "chaos_active": 0, "infra_allow": null, "canary_allow": null, "timestamp": "2026-05-06T22:27:05.449696Z"}
+{"event": "status_scrape", "rps": 0.0, "total_requests": 3, "error_rate": 0.0, "p99_latency_ms": 5.0, "mode": "stable", "chaos_active": 0, "infra_allow": null, "canary_allow": null, "timestamp": "2026-05-06T22:27:10.486669Z"}
+{"event": "status_scrape", "rps": 0.199, "total_requests": 4, "error_rate": 0.0, "p99_latency_ms": 5.0, "mode": "stable", "chaos_active": 0, "infra_allow": null, "canary_allow": null, "timestamp": "2026-05-06T22:27:15.521195Z"}
+{"event": "status_scrape", "rps": 0.0, "total_requests": 4, "error_rate": 0.0, "p99_latency_ms": 5.0, "mode": "stable", "chaos_active": 0, "infra_allow": null, "canary_allow": null, "timestamp": "2026-05-06T22:27:20.536296Z"}
+{"event": "teardown", "timestamp": "2026-05-06T22:28:53.841818Z"}
+{"event": "deploy_success", "mode": "stable", "timestamp": "2026-05-06T22:29:05.652355Z"}
+{"event": "teardown", "timestamp": "2026-05-06T22:35:43.016970Z"}
+{"event": "deploy_success", "mode": "stable", "timestamp": "2026-05-06T22:35:54.011659Z"}
+{"event": "teardown", "timestamp": "2026-05-06T22:39:58.344111Z"}
+{"event": "deploy_success", "mode": "stable", "timestamp": "2026-05-06T22:40:09.401801Z"}

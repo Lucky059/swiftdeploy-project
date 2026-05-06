@@ -3,23 +3,56 @@ events {
 }
 
 http {
-    upstream app {
-        server api:3000;
-    }
+
+    resolver 127.0.0.11 valid=30s;
+
+    log_format custom '$time_iso8601 | $status | ${request_time}s | $upstream_addr | $request';
+    access_log /var/log/nginx/access.log custom;
 
     server {
-        listen 80;
+        listen {{ nginx.port }};
+
+        proxy_connect_timeout {{ nginx.proxy_timeout }}s;
+        proxy_send_timeout    {{ nginx.proxy_timeout }}s;
+        proxy_read_timeout    {{ nginx.proxy_timeout }}s;
 
         location / {
-            proxy_pass http://app;
+            proxy_pass http://{{ services.name }}:{{ services.port }};
+
+            proxy_set_header Host            $host;
+            proxy_set_header X-Real-IP       $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+            add_header X-Mode         $upstream_http_x_mode always;
+            add_header X-Deployed-By  swiftdeploy always;
         }
 
-        location /healthz {
-            proxy_pass http://app/healthz;
-        }
-
+        # /metrics is accessible through nginx (for CLI scraping via nginx port)
         location /metrics {
-            proxy_pass http://app/metrics;
+            proxy_pass http://{{ services.name }}:{{ services.port }}/metrics;
+        }
+
+        # /healthz forwarded too
+        location /healthz {
+            proxy_pass http://{{ services.name }}:{{ services.port }}/healthz;
+        }
+
+        # JSON error bodies for gateway errors
+        error_page 502 @error_502;
+        error_page 503 @error_503;
+        error_page 504 @error_504;
+
+        location @error_502 {
+            default_type application/json;
+            return 502 '{"error":"Bad Gateway","code":"502","service":"{{ services.name }}","contact":"admin@swiftdeploy.io"}';
+        }
+        location @error_503 {
+            default_type application/json;
+            return 503 '{"error":"Service Unavailable","code":"503","service":"{{ services.name }}","contact":"admin@swiftdeploy.io"}';
+        }
+        location @error_504 {
+            default_type application/json;
+            return 504 '{"error":"Gateway Timeout","code":"504","service":"{{ services.name }}","contact":"admin@swiftdeploy.io"}';
         }
     }
 }
